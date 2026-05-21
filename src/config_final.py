@@ -6,7 +6,12 @@ from pathlib import Path
 warnings.filterwarnings("ignore", message="No positive class found in y_true")
 
 # ── Environment Detection ─────────────────────────────────────────────────────
-IS_COLAB = "google.colab" in str(get_ipython()) if "get_ipython" in globals() else False
+try:
+    import google.colab  # noqa: F401
+
+    IS_COLAB = True
+except ImportError:
+    IS_COLAB = False
 
 # ── Global Settings ───────────────────────────────────────────────────────────
 SEED = 42
@@ -25,7 +30,7 @@ UNET_ENCODER = "resnet34"
 UNET_USE_ATTENTION_GATES = True
 UNET_USE_TTA = True
 UNET_MULTIVIEW_AGGREGATE = True
-UNET_POSE_JSON = Path(__file__).resolve().parent / "pose_assignments.json"
+UNET_POSE_JSON = Path(__file__).resolve().parent.parent / "pose_assignments.json"
 
 # ── PatchCore Config ──────────────────────────────────────────────────────────
 PC_BACKBONE = "vit_large_patch14_reg4_dinov2.lvd142m"
@@ -69,9 +74,11 @@ ENSEMBLE_SMOOTH_SIGMA = 0.9  # Post-fusion smoothing
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 if IS_COLAB:
-    ROOT_DIR = Path("/content/drive/MyDrive/ADL/challenge")
-    DATASET_DIR = ROOT_DIR / "data" / "adl-2025-2026-anomaly-detection"
-    OUTPUT_DIR = ROOT_DIR / "outputs_final"
+    # On Colab the repo is cloned into /content/industrial-AD2L by the
+    # `Colab Setup` cell at the top of each notebook.
+    ROOT_DIR = Path("/content/industrial-AD2L")
+    DATASET_DIR = ROOT_DIR / "dataset" / "adl-2025-2026-anomaly-detection_birefnet"
+    OUTPUT_DIR = ROOT_DIR / "outputs"
 else:
     # Local paths - assuming we are in the repo root or 'final' subfolder
     CWD = Path.cwd()
