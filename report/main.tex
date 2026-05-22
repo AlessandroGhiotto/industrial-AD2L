@@ -13,162 +13,233 @@
 \newcolumntype{Y}{>{\centering\arraybackslash}X}
 \usepackage[left=2.00cm, right=2.00cm, top=2.00cm, bottom=2.00cm]{geometry}
 
-\title{AN2DL/ADL Reports Template}
+\title{ADL Challenge Report}
 
 \begin{document}
-    
+
     \begin{figure}[H]
         \raggedright
         \includegraphics[scale=0.5]{polimi.png} \hfill \includegraphics[scale=0.3]{airlab.jpeg}
     \end{figure}
-    
+
     \vspace{5mm}
-    
+
     \begin{center}
-        % {\Large \textbf{AN2DL - First Challenge Report}}\\
-        % {\Large \textbf{AN2DL - Second Challenge Report}}\\
         {\Large \textbf{ADL - Challenge Report}}\\
         \vspace{2mm}
-        % Change with your Team Name
-        {\Large \textbf{Team Name}}\\
+        {\Large \textbf{COLABorative}}\\
         \vspace{2mm}
-        % Team Members Information
-        {\large Name1 Surname1,}
-        {\large Name2 Surname2,}
-        {\large Name3 Surname3,}
-        {\large Name4 Surname4}\\
+        {\large Pietro Beghetto,}
+        {\large Alessandro Ghiotto,}
+        {\large Alessandro Avallone}\\
         \vspace{2mm}
-        % Kaggle Nicknames
-        {Kaggle Nickname1,}
-        {Kaggle Nickname2,}
-        {Kaggle Nickname3,}
-        {Kaggle Nickname4}\\
+        {pietrobeghetto,}
+        {alessandroghiotto,}
+        {zander121}\\
         \vspace{2mm}
-        % Matriculation Numbers
-        {Matricola1,}
-        {Matricola2,}
-        {Matricola3,}
-        {Matricola4}\\
+        {279029,}
+        {303035,}
+        {286399}\\
         \vspace{5mm}
         \today
-    \end{center}    
+    \end{center}
     \vspace{5mm}
-    
+
     \begin{multicols}{2}
-        \noindent \textit{Note: The following sections represent a suggested structure. Feel free to adapt them to better suit your specific project needs.}
-        
+
         \section{Introduction}
-        In this section, you should present your project's context and objectives. You might want to:
-        \begin{itemize}
-            \item Define the problem (\textit{you may use italics to highlight definitions})
-            \item State your goals (\textbf{emphasise key points with bold})
-            \item Outline your approach
-        \end{itemize}
+        The ADL 2025--2026 challenge targets \textit{industrial visual anomaly
+        detection}: given five product classes photographed from five fixed views
+        each, the task is to detect and localise defects at the \textbf{pixel
+        level}. For every class only a handful of labelled anomalies are
+        provided, while normal images are abundant, which naturally pushes the
+        problem toward unsupervised or weakly-supervised solutions. The
+        evaluation metric is pooled pixel average precision (AP) on a held-out
+        test split.
 
-        \noindent For instance, you might write: ``This project focuses on \textit{image classification} using \textbf{deep learning} techniques."
-        
-        \section{Problem Analysis}
-        Here you can discuss your initial analysis of the problem. Consider including:
+        Our final submission is a two-branch system: an unsupervised,
+        memory-based detector built on PatchCore~\cite{roth2022patchcore} with a
+        DINOv2~\cite{oquab2024dinov2} backbone, and a supervised U-Net
+        \cite{ronneberger2015unet} trained on synthetic defects, fused
+        at the pixel level. The path that led to this design, summarised below,
+        explains the role of each component and motivates several preprocessing
+        choices (background removal, pose clustering) that turned out to be
+        decisive.
+
+        \section{Development Process}
+
+        \subsection{First attempts: reconstruction and student--teacher}
+        We started with pure reconstruction baselines (vanilla and denoising
+        autoencoders, \texttt{autoenc1-2.ipynb}). The reconstruction-error
+        proxy was too coarse: the network learned to reconstruct anomalies
+        almost as well as normal regions, and the residual maps were dominated
+        by texture noise outside the object. The student--teacher
+        paradigm~\cite{bergmann2020uninformed}, with a Wide-ResNet-50-2 teacher
+        and a ResNet-18 student trained to mimic its features on normal data,
+        gave better localisation but the score map still leaked heavily onto
+        the background and on cluttered fixtures, which strongly suggested that
+        \textbf{background removal} had to come first.
+
+        \subsection{BiRefNet preprocessing}
+        We therefore preprocessed the whole dataset with
+        BiRefNet~\cite{zheng2024birefnet}: a high-resolution dichotomous
+        segmenter run at $448 \times 448$, half precision on GPU, that produces
+        a soft foreground mask per image. We binarise it at $0.5$, resize it
+        back to the original resolution and composite the foreground over a
+        constant black fill. Ground-truth anomaly masks are not touched. All
+        subsequent models consume this cleaned dataset, which removes a large
+        source of false positives along the object's silhouette.
+
+        \subsection{Pose clustering}
+        The filename suffix \texttt{viewN} does \emph{not} consistently encode
+        the same camera angle across different physical objects. To recover
+        pose-coherent groups we mean-pool DINOv2 patch tokens into a 768-d
+        descriptor per image, $L_2$-normalise, and run $k$-means per class
+        sweeping $K \in [2, 8]$ and picking $K$ by silhouette score. The
+        resulting assignments (\texttt{pose\_assignments.json}) are reused
+        downstream to constrain CutPaste sampling and, indirectly, the
+        statistics of the PatchCore memory bank.
+
+        \subsection{PatchCore with DINOv2}
+        PatchCore became our first competitive detector. We extract dense
+        patch tokens from a frozen \texttt{vit\_large\_patch14\_reg4\_dinov2}
+        at $518 \times 518$, concatenating layers $\{7, 12, 16, 20\}$ to mix
+        mid-level texture and high-level semantics, then project the resulting
+        $4 \cdot 1024$-d features down to 512 components with a GPU
+        randomised-SVD PCA. A greedy coreset of $\leq 10^5$ anchors is built
+        per class and stored as a tensor; at inference time the anomaly score
+        of each patch is the mean Euclidean distance to its $k=9$ nearest
+        coreset entries. The patch grid is smoothed with a Gaussian
+        ($\sigma = 1$) and bilinearly upsampled to image resolution.
+
+        Replacing the ImageNet-pretrained Wide-ResNet of the original
+        formulation~\cite{roth2022patchcore} with DINOv2 features gave the
+        largest single improvement of the whole project: the self-supervised
+        ViT representations are far less sensitive to global appearance
+        variations and emphasise object-local structure, which is exactly
+        what an industrial defect amounts to.
+
+        \subsection{Supervised U-Net on synthetic anomalies}
+        PatchCore alone leaves a clear failure mode: subtle, low-contrast
+        defects whose features are too close to the normal manifold. A
+        complementary \textbf{supervised} branch trained with explicit
+        defect/non-defect labels is the natural fix, but only a few dozen real
+        anomalies per class are available. We therefore turned the few
+        labelled anomalies and a large pool of normal images into a synthetic
+        segmentation training set.
+
+        \textbf{Synthetic anomaly generation.} The
+        \texttt{ShapeTextureBank} decouples a defect's \emph{shape} from its
+        \emph{texture}: shapes are sampled from a mixture of real masks
+        (30\%), elastically warped real masks (25\%), cut-mixed pairs of real
+        masks (10\%), Perlin-noise blobs (15\%), Bézier strokes (15\%) and
+        random walks (5\%); textures are bbox-cropped pixels from real
+        defects. At each \texttt{\_\_getitem\_\_} call on a normal image, with
+        probability $p_\text{cutpaste}{=}0.3$ a defect is pasted via
+        CutPaste~\cite{li2021cutpaste} with geometric and photometric jitter
+        (random flip, rotation, mask dilation/erosion, brightness/contrast,
+        feathered alpha-blending), and with probability $p_\text{multi}{=}0.3$
+        a second crop is pasted on top. With probability
+        $p_\text{synth}{=}0.4$ a purely procedural defect is drawn instead:
+        scratches, stains, indents, cracks, fragments, holes, fuzz; the motif
+        list per class is derived by keyword-matching the official anomaly
+        descriptions CSV. \textbf{Pose-aware sampling} restricts every paste
+        to a source crop that shares the destination's pose cluster; this is
+        important because pasting a top-down defect onto a side view produces
+        unrealistic supervision. Anomalous training images, which lack a
+        pose label, are assigned to the nearest labelled good image of the
+        same class via $32 \times 32$ grayscale $L_2$ nearest neighbour.
+
+        \textbf{Architecture.} The network is a U-Net with a
+        \texttt{resnet34} ImageNet-pretrained encoder, four upsampling stages
+        with \textbf{attention gates}~\cite{oktay2018attentionunet} on every
+        skip connection, and a \textit{view-id} FiLM conditioning that lets a
+        single per-class model specialise its decoder per camera angle.
+        Training uses a $0.5{:}0.5$ BCE+Dice loss, masked to the BiRefNet
+        foreground so that background pixels contribute no gradient.
+
+        \textbf{Inference.} Test-time augmentation (identity + horizontal +
+        vertical flip) is averaged, the BiRefNet foreground is re-applied at
+        test time, and the five views of a physical sample are
+        \emph{co-amplified}: if at least one view confidently fires, the
+        others are scaled by a factor proportional to the maximum confidence.
+
+        \subsection{Ensemble}
+        PatchCore and the U-Net make complementary mistakes. PatchCore is
+        sharp on out-of-distribution patches but produces a ring artefact
+        along the object contour and noisy specks inside textured regions;
+        the U-Net is clean and shape-aware but conservative on rare motifs.
+        Before fusion we therefore (i) morphologically open the PatchCore map
+        with a $r{=}3$ kernel and drop connected components smaller than
+        50 pixels above the $p_{99}$ threshold, and (ii) normalise both maps
+        per class using the \emph{excess-above-$p_{99}$} statistic of
+        good-image scores so that the noise floor maps to $0$. The fused map
+        is then
+        \begin{equation}
+            \label{eq:fusion}
+            s_\text{fused} = \alpha\, s_\text{U-Net} + (1-\alpha)\, s_\text{PC},
+        \end{equation}
+        with the per-class weight $\alpha \in \{0, 0.05, \dots, 1\}$ chosen by
+        grid search to maximise pooled pixel-AP on the labelled training
+        anomalies of that class. We also benchmarked
+        \texttt{unet\_first\_max} ($\max(s_\text{U-Net}, \beta s_\text{PC})$)
+        and a \texttt{two\_tier} rank scheme; the weighted sum was the most
+        robust on validation.
+
+        \subsection{Other approaches we tried shallowly}
+        We additionally ran controlled experiments with
+        DRAEM~\cite{zavrtanik2021draem},
+        EfficientAD~\cite{batzner2024efficientad},
+        RD4AD~\cite{deng2022rd4ad},
+        SimpleNet~\cite{liu2023simplenet} and the zero-shot
+        WinCLIP+~\cite{jeong2023winclip} detector. None of them was
+        competitive with the PatchCore+U-Net pair on this dataset under our
+        time budget --- partly because the small per-class regime penalises
+        the models that need long training (DRAEM, EfficientAD, SimpleNet),
+        and partly because zero-shot prompting (WinCLIP+) lacks the fine
+        spatial resolution required by the pixel-AP metric. Their code is
+        kept in \texttt{final/extra/} for reference.
+
+        \section{Final Architecture}
+        Putting the pieces together, the final pipeline is:
         \begin{enumerate}
-            \item Dataset characteristics
-            \item Main challenges
-            \item Initial assumptions
+            \item \textbf{BiRefNet} background removal applied once to the
+                  whole dataset (preprocessing).
+            \item \textbf{Pose clustering} on DINOv2 global descriptors,
+                  saved per image (preprocessing).
+            \item \textbf{PatchCore} with DINOv2 features, PCA-512 and a
+                  $10^5$-anchor coreset, post-processed with morphological
+                  opening and small-blob removal.
+            \item \textbf{U-Net} (resnet34 encoder, attention gates,
+                  view-id FiLM) trained on synthetic anomalies generated by
+                  the \texttt{ShapeTextureBank} with pose-aware CutPaste, BCE
+                  + Dice loss masked to the foreground, TTA + multi-view
+                  amplification at inference.
+            \item Per-class \textbf{weighted-sum fusion} (Eq.~\ref{eq:fusion})
+                  with $\alpha$ selected on labelled validation, followed by
+                  a final $\sigma{=}0.9$ Gaussian smoothing.
         \end{enumerate}
-
-        \noindent If you need to reference papers, use the citation command: Recent work~\cite{lecun2015deep} suggests..."
-
-        \section{Method}
-        This section should detail your approach. You can use equations to explain your methodology. For example, a simple model representation:
-        \begin{equation}
-            \label{eq:model}
-            f(x) = \text{softmax}(Wx + b)
-        \end{equation}
-
-        \noindent Or a more complex loss function:
-        \begin{equation}
-            \label{eq:loss}
-            \mathcal{L} = -\frac{1}{N}\sum_{i=1}^{N} y_i\log(\hat{y}_i)
-        \end{equation}
-
-        \noindent Reference these equations in your text, like:``As shown in equation~\ref{eq:model}..."
-
-        \section{Experiments}
-        For your experiments, you might want to present your results in tables. Here's an example of a wide table comparing different models:
-
-        \begin{table*}[t]
-            \centering
-            \setlength{\tabcolsep}{3pt}
-            \caption{An example of wide table. Best results are highlighted in \textbf{bold}.}
-            \begin{tabularx}{\textwidth}{lYYYc}
-                \toprule
-                Model & Accuracy & Precision & Recall & ROC AUC\\
-                \midrule
-                VGG18         &  72.20 $\pm$ 3.06    &   94.95 $\pm$ 0.52     &   86.95 $\pm$ 0.55    &   80.16 $\pm$ 0.81\\
-                Custom Model        &  27.71 $\pm$ 3.19    &   75.70 $\pm$ 1.07     &   55.75 $\pm$ 2.16    &   36.60 $\pm$ 1.26\\
-                ResNet18    &  \textbf{89.24 $\pm$ 2.38}    &   \textbf{95.54 $\pm$ 0.49}     &   \textbf{93.43 $\pm$ 1.30}    &   \textbf{91.68 $\pm$ 0.71}\\
-                \bottomrule
-            \end{tabularx}
-            \label{tab:Performance}
-        \end{table*}
-
-        \noindent For more specific measurements, you might use a narrower table:
-    
-        \begin{table}[H]
-            \centering
-            \setlength{\tabcolsep}{3pt}
-            \caption{An example of table. Best results may be highlighted in \textbf{bold}.}
-            \begin{tabularx}{\linewidth}{lY}
-                \toprule
-                Time [$\mu$s] & Distance [mm]\\
-                \midrule
-                22$\pm$4 & 8$\pm$1\\
-                17$\pm$3 & 7$\pm$1\\
-                15$\pm$3 & 6$\pm$1\\
-                13$\pm$2 & 5$\pm$1\\
-                10$\pm$2 & 4$\pm$1\\
-                8$\pm$2 & 3$\pm$1\\
-                5$\pm$1 & 2$\pm$1\\
-                37$\pm$1 & 1$\pm$1\\
-                \bottomrule
-            \end{tabularx}
-            \label{tb:Measurements}
-        \end{table}
-
-        \noindent You can also include figures to visualise your results:
-        \begin{figure}[H]
-            \centering
-            \includegraphics[width=0.75\linewidth]{random.jpeg}
-            \caption{Example figure showing [describe what the figure shows]}
-            \label{fig:results}
-        \end{figure}
-
-        \noindent Reference figures using like:``As shown in Figure~\ref{fig:results}..."
-
-        \section{Results}
-        Present your main findings here. You might want to:
-        \begin{itemize}
-            \item Compare your results with baselines
-            \item Highlight key achievements using \textbf{bold text}
-            \item Explain any unexpected outcomes
-        \end{itemize}
+        The submission stores the resulting anomaly maps as
+        \texttt{q8rle}-encoded byte arrays, normalised globally per class.
 
         \section{Discussion}
-        In this section, analyse your results critically. Consider:
-        \begin{itemize}
-            \item Strengths and weaknesses
-            \item Limitations and assumptions
-        \end{itemize}
-
-        \section{Conclusions}
-        Summarise your work and discuss potential future directions. This is where you can:
-        \begin{itemize}
-            \item Restate main contributions
-            \item Suggest improvements
-            \item Propose future work
-        \end{itemize}
+        Two design decisions disproportionately moved the leaderboard:
+        \textbf{(i)} replacing ImageNet features with DINOv2 inside
+        PatchCore, and \textbf{(ii)} masking out the background with
+        BiRefNet end-to-end. Both target the same failure mode --- the model
+        spending capacity on pixels that the metric does not reward. The
+        ensemble itself adds a more modest but consistent gain on top, mostly
+        on classes where PatchCore is dominant and the U-Net acts as a
+        precision filter, and vice versa. The main remaining weakness is on
+        defects that are both small and low-contrast: PatchCore underweights
+        them because their features are close to the normal manifold, and
+        the U-Net underweights them because the synthetic distribution
+        rarely matches them. A natural next step would be to feed PatchCore's
+        confidence as an additional input channel to the U-Net so that the
+        supervised branch can learn where to focus its capacity.
 
         \bibliography{references}
         \bibliographystyle{abbrv}
-    
+
     \end{multicols}
 \end{document}

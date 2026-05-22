@@ -1,0 +1,63 @@
+\begin{thebibliography}{10}
+
+\bibitem{batzner2024efficientad}
+K.~Batzner, L.~Heckler, and R.~K{\"o}nig.
+\newblock {EfficientAD}: Accurate visual anomaly detection at millisecond-level latencies.
+\newblock In {\em WACV}, 2024.
+
+\bibitem{bergmann2020uninformed}
+P.~Bergmann, M.~Fauser, D.~Sattlegger, and C.~Steger.
+\newblock Uninformed students: Student--teacher anomaly detection with discriminative latent embeddings.
+\newblock In {\em CVPR}, 2020.
+
+\bibitem{deng2022rd4ad}
+H.~Deng and X.~Li.
+\newblock Anomaly detection via reverse distillation from one-class embedding.
+\newblock In {\em CVPR}, 2022.
+
+\bibitem{jeong2023winclip}
+J.~Jeong, Y.~Zou, T.~Kim, D.~Zhang, A.~Ravichandran, and O.~Dabeer.
+\newblock {WinCLIP}: Zero-/few-shot anomaly classification and segmentation.
+\newblock In {\em CVPR}, 2023.
+
+\bibitem{li2021cutpaste}
+C.-L. Li, K.~Sohn, J.~Yoon, and T.~Pfister.
+\newblock {CutPaste}: Self-supervised learning for anomaly detection and localization.
+\newblock In {\em CVPR}, 2021.
+
+\bibitem{liu2023simplenet}
+Z.~Liu, Y.~Zhou, Y.~Xu, and Z.~Wang.
+\newblock {SimpleNet}: A simple network for image anomaly detection and localization.
+\newblock In {\em CVPR}, 2023.
+
+\bibitem{oktay2018attentionunet}
+O.~Oktay, J.~Schlemper, L.~Le~Folgoc, M.~Lee, M.~Heinrich, K.~Misawa, K.~Mori, S.~McDonagh, N.~Y. Hammerla, B.~Kainz, et~al.
+\newblock Attention u-net: Learning where to look for the pancreas.
+\newblock {\em arXiv:1804.03999}, 2018.
+
+\bibitem{oquab2024dinov2}
+M.~Oquab, T.~Darcet, T.~Moutakanni, et~al.
+\newblock {DINOv2}: Learning robust visual features without supervision.
+\newblock {\em TMLR}, 2024.
+
+\bibitem{ronneberger2015unet}
+O.~Ronneberger, P.~Fischer, and T.~Brox.
+\newblock U-net: Convolutional networks for biomedical image segmentation.
+\newblock In {\em MICCAI}, 2015.
+
+\bibitem{roth2022patchcore}
+K.~Roth, L.~Pemula, J.~Zepeda, B.~Sch{\"o}lkopf, T.~Brox, and P.~Gehler.
+\newblock Towards total recall in industrial anomaly detection.
+\newblock In {\em CVPR}, 2022.
+
+\bibitem{zavrtanik2021draem}
+V.~Zavrtanik, M.~Kristan, and D.~Sko{\v{c}}aj.
+\newblock {DRAEM}: A discriminatively trained reconstruction embedding for surface anomaly detection.
+\newblock In {\em ICCV}, 2021.
+
+\bibitem{zheng2024birefnet}
+P.~Zheng, D.~Gao, D.-P. Fan, L.~Liu, J.~Laaksonen, W.~Ouyang, and N.~Sebe.
+\newblock Bilateral reference for high-resolution dichotomous image segmentation.
+\newblock In {\em CAAI Artificial Intelligence Research}, 2024.
+
+\end{thebibliography}
