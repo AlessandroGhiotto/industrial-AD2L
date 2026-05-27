@@ -12,6 +12,8 @@
 \usepackage{hyperref}
 \newcolumntype{Y}{>{\centering\arraybackslash}X}
 \usepackage[left=2.00cm, right=2.00cm, top=2.00cm, bottom=2.00cm]{geometry}
+\usepackage{enumitem}
+\setitemize{noitemsep,topsep=0pt,parsep=0pt,partopsep=0pt}
 
 \title{ADL Challenge Report}
 
@@ -51,7 +53,7 @@
         The ADL 2025--2026 challenge targets \textit{industrial visual anomaly
         detection}: given eight product classes photographed from five views
         each, the task is to detect and localise defects at the pixel
-        level.
+        level. 
         Our final submission is a two-branch system: an unsupervised detector built on PatchCore~\cite{roth2022patchcore} with a
         DINOv2~\cite{oquab2024dinov2} backbone, and a supervised U-Net
         \cite{ronneberger2015unet} trained on synthetic defects.
@@ -59,89 +61,91 @@
         \section{Development Process}
 
         \subsection{Problem Analysis}
-        \begin{itemize}
-            \item \textbf{Label scarcity:} We were provided with only a few labelled anomalies for each class, naturally pushing us towards an unsupervised or weakly supervised solution.
-            \item \textbf{Inconsistent views:} The view IDs were not correlated with a specific view angle.
-            \item \textbf{Anomaly descriptions:} Each ground truth mask was accompanied by a brief description of the defect it was highlighting.
-        \end{itemize}
+        % \begin{itemize}[noitemsep,topsep=0pt,parsep=0pt,partopsep=0pt,leftmargin=*]
+        % \item\textbf{Label scarcity:} We were provided with only a few labelled anomalies for each class, naturally pushing us towards an unsupervised or weakly supervised solution.
+        % \item\textbf{Inconsistent views:} The view IDs were not associated with a specific view angle.
+        % \item\textbf{Anomaly descriptions:} Each ground truth mask was accompanied by a brief description of the defect it was highlighting.
+        % \end{itemize}
+        \textbf{Label scarcity:} We were provided with only a few labelled anomalies for each class, naturally pushing us towards an unsupervised or weakly supervised solution.\\
+        \textbf{Inconsistent views:} The view IDs were not associated with a specific view angle.\\
+        \textbf{Anomaly descriptions:} Each ground truth mask was accompanied by a brief description of the defect it was highlighting.
+        
+        
         \subsection{First attempts: reconstruction and student--teacher}
         We started with pure reconstruction baselines (vanilla and denoising
-        autoencoders). The reconstruction loss was too coarse: the network learned to reconstruct anomalies
+        autoencoders). The network learned to reconstruct anomalies
         almost as well as normal regions, and the anomaly heatmaps were contaminated
         by noise outside the object. The student--teacher
-        paradigm~\cite{bergmann2020uninformed}, with a Wide-ResNet-50-2 teacher
-        and a ResNet-18 student trained to mimic its features on normal data,
-        gave better localisation but the score map still leaked heavily onto
-        the background and on cluttered fixtures, which strongly suggested that
-        \textbf{background removal} had to come first.
+        paradigm~\cite{bergmann2020uninformed}, with a Wide-ResNet-50-2~\cite{Zagoruyko2016WRN} teacher
+        and a ResNet-18~\cite{He2015Deep} student trained to mimic its features on normal data,
+        gave better localisation than autoencodes but showed poor performance on some classes (especially class 3, see Tab.~\ref{tab:per-class-ap}) and proved more expensive to train than PatchCore.
 
         \subsection{BiRefNet preprocessing}
-        We therefore preprocessed the whole dataset with
+        After noticing that a lot of different models were struggling with false positives on background reflections, we decided to
+        preprocesse the whole dataset with
         BiRefNet~\cite{zheng2024birefnet}: a high-resolution
         segmenter that produces
-        a soft foreground mask per image. We binarise it at $0.5$, and composite the foreground over a
-        constant black fill. Ground-truth anomaly masks are not touched. All
+        a soft foreground mask per image. All
         subsequent models use this cleaned dataset, which removes a large
-        source of false positives along the object's silhouette and in the background.
+        source of false positives along the object's silhouette and in the background. Although background removal occasionally clipped parts of dark defects, this did not affect performance, as those defects were still correctly identified.
+
 
         \subsection{Pose clustering}
         Since the filename suffix \texttt{viewN} does \emph{not} consistently encode
-        the same camera angle across different physical objects, to recover
-        pose-coherent groups we mean-pool DINOv2 patch tokens into a 768-d
-        descriptor per image, $L_2$-normalise, and run $k$-means per class
-        sweeping $K \in [2, 8]$ and picking $K$ by silhouette score. The
+        the same camera angle, to recover
+        pose-coherent groups we mean-pool DINOv2 patch tokens into
+        descriptor per image, and run $k$-means per class
+        and picking $K$ by silhouette score. The
         resulting assignments are reused
         downstream to constrain CutPaste sampling and for FiLM conditioning.
 
         \subsection{PatchCore with DINOv2}
         PatchCore became our first competitive detector. We extract dense
         patch tokens from a frozen \texttt{vit\_base\_patch14\_reg4\_dinov2}
-        at $518 \times 518$, concatenating layers $\{7, 12, 16, 20\}$ to mix
+        at $518 \times 518$, concatenating layers $\{3, 6, 9, 11\}$ to mix
         mid-level texture and high-level semantics, then project the resulting
-        $4 \cdot 768$-d features down to 512 components with a
+        $4 \cdot 768$-d features down to $384$ components with a
         randomised-SVD PCA. A greedy coreset of $\leq 10^5$ anchors is built
         per class and stored as a tensor; at inference time the anomaly score
         of each patch is the mean Euclidean distance to its $k=9$ nearest
         coreset entries. The patch grid is smoothed with a Gaussian
-        ($\sigma = 1$) and bilinearly upsampled to image resolution. We also
-        ran the large variant (\texttt{vit\_large\_patch14\_reg4\_dinov2}, $4\!\cdot\!1024$-d)
-        but observed essentially no pixel-AP gain over the base model, so we
-        kept the cheaper backbone.
+        ($\sigma = 1$) and bilinearly upsampled to image resolution.
 
         Replacing the ImageNet-pretrained Wide-ResNet of the original
-        formulation~\cite{roth2022patchcore} with DINOv2 features gave a significant boost to pixel AP: the
-        ViT representations are far less sensitive to global appearance
-        variations and emphasise local structure, which is what most industrial defects amount to.
+        formulation~\cite{roth2022patchcore} with DINOv2 features gave a significant boost to pixel AP.
+        We also ran experiments with the larger DinoV2 variants, but the measured improvement was marginal.
 
         \subsection{Supervised U-Net on synthetic anomalies}
-        PatchCore alone leaves a clear failure mode: subtle, low-contrast
-        defects whose features are too close to the normal manifold. A
-        complementary supervised branch trained with explicit labels is the natural fix, but only a few dozen real
+        PatchCore alone leaves some clear failure modes: low-contrast
+        defects whose features are too close to the normal manifold and defects which are small compared to patch size. A
+        complementary supervised branch trained with explicit labels is the natural fix, but only a few real
         anomalies per class are available. We therefore turned the few
-        labelled anomalies and a large pool of normal images into a synthetic
+        labelled anomalies and the normal images into a synthetic
         segmentation training set.
 
-        \textbf{Synthetic anomaly generation.} The
-        \texttt{ShapeTextureBank} decouples a defect's \emph{shape} from its
-        \emph{texture}: shapes are sampled from a mixture of real masks
-        (30\%), elastically warped real masks (25\%), cut-mixed pairs of real
-        masks (10\%), Perlin-noise blobs (15\%), Bézier strokes (15\%) and
-        random walks (5\%); textures are bbox-cropped pixels from real
-        defects. At each \texttt{\_\_getitem\_\_} call on a normal image, with
-        probability $p_\text{cutpaste}{=}0.3$ a defect is pasted via
-        CutPaste~\cite{li2021cutpaste} with geometric and photometric jitter
-        (random flip, rotation, mask dilation/erosion, brightness/contrast,
-        feathered alpha-blending), and with probability $p_\text{multi}{=}0.3$
-        a second crop is pasted on top. With probability
-        $p_\text{synth}{=}0.4$ a purely procedural defect is drawn instead:
-        scratches, stains, indents, cracks, fragments, holes, fuzz; the motif
-        list per class is derived by keyword-matching the anomaly
-        descriptions CSV. \textbf{Pose-aware sampling} restricts every paste
-        to a source crop that shares the destination's pose cluster; this is
-        important because pasting a top-down defect onto a side view produces
-        unrealistic supervision. Anomalous training images, which lack a
-        pose label, are assigned to the nearest labelled good image of the
-        same class via $32 \times 32$ grayscale $L_2$ nearest neighbour.
+        \textbf{Synthetic anomaly generation.}
+        We build a synthetic segmentation dataset by pasting anomalous regions onto normal images. Our \texttt{ShapeTextureBank} disentangles defect \emph{shape} and \emph{texture}: shapes are sampled from both real and procedurally generated masks (e.g., warped masks, Perlin blobs, strokes), while textures are cropped from real anomalies. Synthetic defects are inserted through CutPaste-style compositing~\cite{li2021cutpaste} with geometric and photometric augmentations, optionally combining multiple defects in the same image. We additionally generate procedural motifs such as scratches, cracks, stains, and holes, selected according to the anomaly descriptions of each class. To improve realism, pasted defects are restricted to source images sharing the same pose cluster as the target sample.
+        
+        % \textbf{Synthetic anomaly generation.} The
+        % \texttt{ShapeTextureBank} decouples a defect's \emph{shape} from its
+        % \emph{texture}: shapes are sampled from a mixture of real masks
+        % (30\%), elastically warped real masks (25\%), cut-mixed pairs of real
+        % masks (10\%), Perlin-noise blobs (15\%), Bézier strokes (15\%) and
+        % random walks (5\%); textures are bbox-cropped pixels from real
+        % defects. At each \texttt{\_\_getitem\_\_} call on a normal image, with
+        % probability $p_\text{cutpaste}{=}0.3$ a defect is pasted via
+        % CutPaste~\cite{li2021cutpaste} with geometric and photometric jitter
+        % (random flip, rotation, mask dilation/erosion, brightness/contrast,
+        % feathered alpha-blending), and with probability $p_\text{multi}{=}0.3$
+        % a second crop is pasted on top. With probability
+        % $p_\text{synth}{=}0.4$ a 
+        % procedural defect is drawn instead:
+        % scratches, stains, indents, cracks, fragments, holes, fuzz; the motif
+        % list per class is derived by keyword-matching the anomaly
+        % descriptions CSV. \textbf{Pose-aware sampling} restricts every paste
+        % to a source crop that shares the destination's pose cluster; this is
+        % important because pasting a top-down defect onto a side view produces
+        % unrealistic supervision.
 
         \textbf{Architecture.} The network is a U-Net with a
         \texttt{resnet34} ImageNet-pretrained encoder, four upsampling stages
@@ -150,23 +154,50 @@
         single per-class model specialise its decoder per camera angle.
         Training uses a $0.5{:}0.5$ BCE+Dice loss, masked to the BiRefNet
         foreground.
-
+        
         \textbf{Inference.} Test-time augmentation (identity + horizontal +
         vertical flip) is averaged, the BiRefNet foreground is re-applied at
         test time, and the five views of a physical sample are
         \emph{co-amplified}: if at least one view confidently fires, the
         others are scaled by a factor proportional to the maximum confidence.
 
+        \begin{table*}[tb]
+            \centering
+            \footnotesize
+            \setlength{\tabcolsep}{4pt}
+            \caption{Pixel-AP per class on the held-out labeled validation pool.
+            AE: denoising autoencoder. ST: student--teacher.
+            PC: PatchCore. U-Net$^-$: U-Net trained on raw
+            (non-BiRefNet) images. U-Net: full pipeline. Ens.: weighted-sum
+            fusion with per-class $\alpha$. }
+            \label{tab:per-class-ap}
+            \begin{tabular}{lccccccccc}
+                Method & C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & Mean \\
+                \midrule
+                AE & 36.0 & 22.0 & 5.6 & 14.1 & 4.4 & 55.0 & 19.6 & 79.4 & 29.5 \\
+                ST & 44.8 & 60.5 & 6.1 & 29.9 & 53.6 & 57.0 & 28.1 & 74.7 & 44.4 \\
+                PC (DINOv2-base) & 74.7 & 67.9 & 51.2 & 54.8 & 54.9 & 51.9 & 24.5 & 63.7 & 55.4 \\
+                U-Net$^{-}$ (no BiRefNet) & 83.0 & 31.8 & 45.7 & 13.0 & 34.5 & 98.5 & 49.4 & 95.4 & 56.4 \\
+                U-Net & 83.5 & 86.5 & 75.0 & 74.2 & 92.6 & 97.8 & 62.9 & 93.5 & 83.3 \\
+                \midrule
+                \textbf{Ens.} & \textbf{87.2} & \textbf{87.0} & \textbf{77.4} & \textbf{79.1} & \textbf{92.8} & \textbf{97.8} & \textbf{62.9} & \textbf{96.2} & \textbf{85.1} \\
+                \bottomrule
+            \end{tabular}
+        \end{table*}
+
+        % \begin{figure}[H]
+        %     \centering
+        %     \includegraphics[width=0.75\linewidth]{random.jpeg}
+        %     \caption{Example figure showing [describe what the figure shows]}
+        %     \label{fig:results}
+        % \end{figure}
+        
         \subsection{Ensemble}
         PatchCore and the U-Net make complementary mistakes. PatchCore is
         sharp on out-of-distribution patches but produces a ring artefact
-        along the object contour and noisy specks inside textured regions;
-        the U-Net is clean and shape-aware but conservative on rare motifs.
-        Before fusion we therefore (i) morphologically open the PatchCore map
-        with a $r{=}3$ kernel and drop connected components smaller than
-        50 pixels above the $p_{99}$ threshold, and (ii) normalise both maps
-        per class using the \emph{excess-above-$p_{99}$} statistic of
-        good-image scores so that the noise floor maps to $0$. The fused map
+        along the object contour and noisy spots inside textured regions;
+        the U-Net is clean and shape-aware but misses rare defects.
+        Before fusion, we therefore (i) clean up the PatchCore map by discarding any connected regions smaller than 50 pixels that exceed the $p_{99}$ threshold, and (ii) normalise both maps per class using the \emph{excess-above-$p_{99}$} statistic computed on good-image scores, so that background noise is mapped to $0$. The fused map
         is then
         \begin{equation}
             \label{eq:fusion}
@@ -176,99 +207,54 @@
         grid search to maximise pooled pixel-AP on the labelled training
         anomalies of that class. The weighted sum was the most
         robust on validation.
-        \paragraph{Validation protocol.}
-        To select $\alpha$ and compare strategies we build a held-out proxy
-        split from the labelled training data: 20\% of the normal images are
-        withheld, the remaining 80\% rebuild a class-specific PatchCore bank
-        and re-estimate the $p_{99}$ calibration constant, and all labelled
-        training anomalies are pooled with their pixel masks. Per-class
-        $\alpha$ is then swept independently to maximise pooled pixel-AP. The
-        same protocol was reused to compare the alternative fusion rules
-        (\texttt{max}, \texttt{geometric\_mean}, \texttt{cascaded},
-        \texttt{two\_tier}) and a PatchCore power transform
-        $s_{\mathrm{PC}}^{\gamma}$.
 
+        \begin{figure}[H]
+            \centering
+            \includegraphics[width=1\linewidth]{image.png}
+            \caption{Example of prediction for which PC improves the U-Net performances}
+            \label{fig:results}
+        \end{figure}
+        
+        \paragraph{Validation protocol.}
+        To select $\alpha$ and compare strategies we construct a validation from the labeled training data.  For each class, 20\% of
+        the normal images are withheld; the remaining 80\% are used to rebuild a class-specific
+        PatchCore bank with the same pipeline.  All labeled training anomalies are
+        added to the validation pool with their pixel masks. The same methodology was used to
+        evaluate the alternative fusion rules (\texttt{max},
+        \texttt{geometric\_mean}, \texttt{cascaded}, \texttt{two\_tier}) and the PatchCore power
+        transform $s_{\mathrm{PC}}^{\gamma}$ for
+        $\gamma \in \{0.5, 0.75, 1.25, 1.5, 2.0, 2.5, 3.0\}$.
+        
         \subsection{Other approaches we tried shallowly}
-        We additionally ran shorter experiments with
+        We additionally ran controlled experiments with
         DRAEM~\cite{zavrtanik2021draem},
         EfficientAD~\cite{batzner2024efficientad},
         RD4AD~\cite{deng2022rd4ad},
         SimpleNet~\cite{liu2023simplenet} and the few-shot
-        WinCLIP+~\cite{jeong2023winclip}: none of them was competitive with
-        the PatchCore+U-Net pair under our time budget, and their code is
-        kept in \texttt{final/extra/} for reference.
-
-        \section{Final Architecture}
-        Putting the pieces together, the final pipeline is:
-        \begin{enumerate}
-            \item \textbf{BiRefNet} background removal applied once to the
-                  whole dataset (preprocessing).
-            \item \textbf{Pose clustering} on DINOv2 global descriptors,
-                  saved per image (preprocessing).
-            \item \textbf{PatchCore} with DINOv2 features, PCA-512 and a
-                  $10^5$-anchor coreset, post-processed with morphological
-                  opening and small-blob removal.
-            \item \textbf{U-Net} (resnet34 encoder, attention gates,
-                  view-id FiLM) trained on synthetic anomalies generated by
-                  the \texttt{ShapeTextureBank} with pose-aware CutPaste, BCE
-                  + Dice loss masked to the foreground, TTA + multi-view
-                  amplification at inference.
-            \item Per-class \textbf{weighted-sum fusion} (Eq.~\ref{eq:fusion})
-                  with $\alpha$ selected on labelled validation, followed by
-                  a final $\sigma{=}0.9$ Gaussian smoothing.
-        \end{enumerate}
-
-    \end{multicols}
-
-    \begin{table}[tb]
-        \centering
-        \footnotesize
-        \setlength{\tabcolsep}{4pt}
-        \caption{Pixel-AP per class on the held-out labelled validation pool.
-        AE: denoising autoencoder. ST: WRN-50-2 / ResNet-18 student--teacher.
-        PC: PatchCore with DINOv2-base. U-Net$^-$: U-Net trained on raw
-        (non-BiRefNet) images. U-Net: full pipeline. Ens.: weighted-sum
-        fusion with per-class $\alpha$. Numbers are placeholders.}
-        \label{tab:per-class-ap}
-        \begin{tabular}{lccccccccc}
-            Method & C1 & C2 & C3 & C4 & C5 & C6 & C7 & C8 & Mean \\
-            \midrule
-            AE & 36.0 & 22.0 & 5.6 & 14.1 & 4.4 & 55.0 & 19.6 & 79.4 & 29.5 \\
-            ST & 44.8 & 60.5 & 6.1 & 29.9 & 53.6 & 57.0 & 28.1 & 74.7 & 44.4 \\
-            PC (DINOv2-base) & 74.7 & 67.9 & 51.2 & 54.8 & 54.9 & 51.9 & 24.5 & 63.7 & 55.4 \\
-            U-Net$^{-}$ (no BiRefNet) & 83.0 & 31.8 & 45.7 & 13.0 & 34.5 & 98.5 & 49.4 & 95.4 & 56.4 \\
-            U-Net & 83.5 & 86.5 & 75.0 & 74.2 & 92.6 & 97.8 & 62.9 & 93.5 & 83.3 \\
-            \midrule
-            \textbf{Ens.} & 87.2 & 87.0 & 77.4 & 79.1 & 92.8 & 97.8 & 62.9 & 96.2 & 85.1 \\
-            \bottomrule
-        \end{tabular}
-    \end{table}
-
-    \begin{multicols}{2}
-
+        WinCLIP+~\cite{jeong2023winclip} detector. None of them was
+        competitive with the PatchCore+U-Net pair on this dataset under our
+        time budget, partly because the small per-class regime penalises
+        the models that need long training (DRAEM, EfficientAD, SimpleNet, Student-Teacher),
+        and partly because few-shot prompting (WinCLIP+) lacks the fine
+        spatial resolution required by the pixel-AP metric. 
+        We further explored several feature configurations for PatchCore, including DINOv2 CLS tokens for global semantic representations (which tended to produce hard to explain anomaly scores), Depth Anything V2~\cite{yang2024depthv2} features for shape-oriented cues (which tended to over-smooth the anomaly maps). We also investigated GrabCut-based~\cite{rother2004grabcut} post-processing of anomaly heatmaps.
+        % Nevertheless, these alternatives showed several limitations. DINOv2 CLS tokens produced unstable anomaly scores, occasionally overreacting to minor local variations while assigning high scores to nominally normal samples.
+        
         \section{Discussion}
-        Table~\ref{tab:per-class-ap} shows three decisions that
-        disproportionately moved the metric: \textbf{(i)} replacing ImageNet
-        features with DINOv2 inside PatchCore, \textbf{(ii)} masking out the
-        background with BiRefNet end-to-end (visible in the U-Net$^-$ vs
-        U-Net rows), and \textbf{(iii)} calibrating raw PatchCore scores by
-        the 99th percentile of per-image maxima on normal training
-        images, which maps k-NN distances to a comparable $[0,1]$ range
-        across classes. (i) and (ii) attack the same failure mode --- the
-        model spending capacity on pixels the metric does not reward --- while
-        (iii) fixes the incomparability of raw distances. The ensemble adds
-        a smaller but consistent gain on top, mostly where one branch is
-        dominant and the other acts as a precision filter (see
-        \texttt{outputs/qualitative\_combined.pdf} for representative
-        examples). Per-class variance is large: some
-        classes are essentially solved by either branch, while a few
-        remain hard for both. The main residual failure mode is small,
-        low-contrast defects: PatchCore underweights them because their
-        features are close to the normal manifold and the U-Net underweights
-        them because the synthetic distribution rarely matches them. A
-        natural next step is to feed PatchCore's confidence as an extra
-        input channel to the U-Net, so the supervised branch learns where
-        to focus its capacity.
+        Some of the changes that improved the pixel-AP the most were:
+         replacing ImageNet features with DINOv2 inside
+        PatchCore,  masking out the background with
+        BiRefNet end-to-end, and calibrating raw PatchCore scores by dividing each test heatmap by the 99th percentile of per-image maximum scores on normal training images, mapping distances to a consistent $[0,1]$ range across classes. The calibration step addressed the raw k-NN distances having incomparable magnitudes across classes. The main remaining weakness is on
+        defects that are small or hard to replicate with our defect generation pipeline: PatchCore underweights
+        them because their features are close to the normal manifold, and
+        the U-Net underweights them because the synthetic distribution
+        rarely matches them.
+        Our analysis shows that the ensemble outperformed the U-Net alone, primarily because PatchCore provides greater sensitivity to defects which were not seen by the U-Net during training (see Fig.~\ref{fig:results}).
+        \subsection{Areas of improvement}
+        A natural next step would be to feed PatchCore's
+        confidence as an additional input channel to the U-Net so that the
+        supervised branch can learn where to focus its capacity.
+        Our analysis revealed that certain classes contained defects that were significantly harder to detect, with the pistachio nut class scoring the lowest. A possible solution would be to add another network specialized in texture defects (i.e., DRAEM) to the ensemble.
 
         \bibliography{references}
         \bibliographystyle{abbrv}
